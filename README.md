@@ -1,108 +1,101 @@
-# 🤖 MyBalancingRobot (หุ่นยนต์สองล้อสมดุลอัจฉริยะ)
+# 🤖 MyBalancingRobot (Smart Two-Wheeled Balancing Robot)
 
 ![Project Status](https://img.shields.io/badge/Status-Active-success)
 ![Platform](https://img.shields.io/badge/PlatformIO-VS%20Code-blue)
 ![MCU](https://img.shields.io/badge/MCU-STM32%20%7C%20ESP32-orange)
 
-โปรเจกต์หุ่นยนต์สองล้อสมดุล (Self-Balancing Robot) ที่มาพร้อมกับระบบควบคุมที่หลากหลาย รองรับทั้งการบังคับผ่าน **รีโมทคอนโทรลแบบสร้างเอง (Custom Remote)** และการสั่งงานผ่าน **Web Application** พร้อมระบบนำทางด้วยพิกัด GPS และแสดงออกทางอารมณ์ผ่านจอ OLED
+A self-balancing robot project featuring versatile control systems. It supports both a **Custom RF Remote Control** and a **Web Application**, complete with GPS waypoint autonomous navigation and expressive OLED eyes.
 
-## ✨ ฟีเจอร์หลัก (Key Features)
+## ✨ Key Features
 
-* **⚖️ Self-Balancing:** ทรงตัวอัตโนมัติด้วยเซ็นเซอร์ MPU6050 และสมการควบคุมแบบ PID (Full-State Feedback)
-* **🌐 Web-based Control:** ควบคุมหุ่นยนต์ผ่านหน้าเว็บ (ESP32 Web Server) พร้อมแผนที่ Leaflet.js
-* **📍 GPS Waypoint Navigation:** ระบบนำทางอัตโนมัติไปยังจุดหมายที่จิ้มบนแผนที่ (ใช้ GPS ร่วมกับเข็มทิศ QMC5883L)
-* **🎮 Custom RF Remote:** รีโมทคอนโทรลหน้าจอ OLED ส่งสัญญาณผ่าน nRF24L01 (2.4GHz) ระยะไกล
-* **👀 Interactive OLED Eyes:** จอแสดงผลใบหน้า/ดวงตาของหุ่นยนต์ที่ตอบสนองตามมุมเอียง (Pitch Angle)
-* **🤖 Animatronic Head:** ระบบ Servo คู่สำหรับหมุนหัว (Pan/Tilt) และขยับหู/ตา พร้อมโหมด Auto-Scan ส่ายหัวอัตโนมัติ
+* **⚖️ Self-Balancing:** Auto-stabilization using an MPU6050 sensor and PID control loop (Full-State Feedback).
+* **🌐 Web-based Control:** Control the robot via a web interface (ESP32 Web Server) integrated with Leaflet.js maps.
+* **📍 GPS Waypoint Navigation:** Autonomous navigation to points clicked on the map (utilizing GPS and QMC5883L Compass).
+* **🎮 Custom RF Remote:** Handheld controller with an OLED display, transmitting commands via a long-range nRF24L01 (2.4GHz) module.
+* **👀 Interactive OLED Eyes:** Facial expression displays on the robot that react dynamically to its current pitch angle.
+* **🤖 Animatronic Head:** Quad-servo system for pan/tilt head movements and ear actuation, featuring an automatic scanning mode.
 
-## 📂 โครงสร้างโปรเจกต์ (Project Structure)
+## 📂 Project Structure
 
-โปรเจกต์นี้ถูกแบ่งออกเป็น 3 ส่วนหลัก (3 โฟลเดอร์ใน PlatformIO Workspace) ซึ่งทำงานร่วมกันแบบ Multi-MCU:
+This project is divided into 3 main parts (3 folders within the PlatformIO Workspace) that work together in a Multi-MCU ecosystem:
 
 ```text
 MYBALANCINGROBOT/
 │
-├── 📁 Self-balancing_STM32/    # [STM32] หัวใจหลักของระบบทรงตัว
-│   └── ควบคุมมอเตอร์, อ่านค่า Encoder, คำนวณ PID, อ่านค่า MPU6050
+├── 📁 Self-balancing_STM32/    # [STM32] The Core Balancing System
+│   └── Motor control, Encoder reading, PID calculation, MPU6050 processing
 │
-├── 📁 communication_Esp32/     # [ESP32] ศูนย์กลางการสื่อสารและหน้าเว็บ
-│   └── จัดการ Web Server, อ่าน GPS/Compass, รับค่า nRF24 จากรีโมท, สั่งงาน Servo
-│   └── 💬 สื่อสารกับบอร์ดทรงตัว (STM32) ผ่าน Serial UART
+├── 📁 communication_Esp32/     # [ESP32] Communications & Web Hub
+│   └── Web Server hosting, GPS/Compass parsing, nRF24 receiver, Servo driving
+│   └── 💬 Communicates with the balancing board (STM32) via Serial UART
 │
-└── 📁 Remote_STM32_2/          # [STM32] รีโมทคอนโทรล
-    └── อ่านค่า Joystick, แสดงผลจอ OLED (QR Code/IP), ส่งข้อมูลผ่าน nRF24L01
+└── 📁 Remote_STM32_2/          # [STM32] The Custom Remote
+    └── Analog Joystick reading, OLED display (QR Code/IP), nRF24L01 transmission
+⚙️ System Architecture
+The system consists of 3 microcontrollers working in harmony:
 
+Remote (STM32) ➜ Sends Joystick data via nRF24L01 radio waves ➜ to the ESP32.
 
-⚙️ สถาปัตยกรรมการสื่อสาร (System Architecture)
+ESP32 ➜ Acts as the central hub receiving remote data, processing the Web UI, and managing GPS/Servos ➜ Sends speed/turn commands via Serial (UART) ➜ to the Balancing Board (STM32).
 
-ระบบประกอบด้วยไมโครคอนโทรลเลอร์ 3 ตัว ทำงานสอดประสานกัน:
+Balancing Board (STM32) ➜ Receives speed commands ➜ Calculates PID to maintain balance ➜ Drives motors ➜ Sends telemetry data back to the ESP32.
 
-Remote (STM32) ➜ ส่งข้อมูล Joystick ผ่านคลื่นวิทยุ nRF24L01 ➜ ไปยัง ESP32
+🛠️ Hardware Requirements
+1. Robot Body (Balancing Core)
 
-ESP32 ➜ เป็นตัวกลางรับข้อมูลจาก Remote, ประมวลผล Web UI, ดูแล GPS/Servo ➜ ส่งคำสั่งความเร็ว (Speed/Turn) ผ่านสาย Serial (UART) ➜ ไปยัง บอร์ดสมดุล (STM32)
+STM32 Board (Bluepill / Maple Core) x 1
 
-บอร์ดสมดุล (STM32) ➜ รับคำสั่งความเร็ว ➜ คำนวณ PID รักษาสมดุล ➜ สั่งขับมอเตอร์ ➜ ส่งข้อมูลสถานะ (Telemetry) กลับไปที่ ESP32
+MPU6050 IMU Sensor x 1
 
-🛠️ ฮาร์ดแวร์ที่ใช้ (Hardware Requirements)
+DC Motors with Encoders (e.g., Nidec 24H) x 2
 
-1. ส่วนตัวหุ่นยนต์ (Robot Body)
+Motor Driver Board x 1
 
-บอร์ด STM32 (Bluepill / Maple Core) x 1
+2. Communications & Head System
 
-เซ็นเซอร์วัดความเอียง MPU6050 x 1
+ESP32 Board x 1
 
-มอเตอร์ DC พร้อม Encoder (เช่น Nidec 24H) x 2
+nRF24L01 Wireless Module x 1
 
-บอร์ดขับมอเตอร์ (Motor Driver) x 1
+GPS Module (e.g., NEO-6M / M8N) x 1
 
-2. ส่วนการสื่อสารและลูกเล่น (Comms & Head)
+QMC5883L Compass Module x 1
 
-บอร์ด ESP32 x 1
+0.96" OLED Display (I2C) x 1
 
-โมดูลวิทยุ nRF24L01 x 1
+Servo Motors x 4 (For head panning and ear movements)
 
-โมดูล GPS (เช่น NEO-6M / M8N) x 1
+3. Remote Controller
 
-โมดูลเข็มทิศ QMC5883L x 1
+STM32 Board (Bluepill) x 1
 
-จอแสดงผล OLED 0.96" (I2C) x 1
+nRF24L01 Wireless Module x 1
 
-Servo Motors x 4 (สำหรับส่วนหัวและหู)
+0.96" OLED Display (I2C) x 1
 
-3. ส่วนรีโมท (Remote Controller)
+Analog Joystick Module x 1
 
-บอร์ด STM32 (Bluepill) x 1
+💻 Installation & Setup
+This project is written in C++ using the Arduino Framework via PlatformIO IDE on VS Code.
 
-โมดูลวิทยุ nRF24L01 x 1
+Clone this repository to your local machine:
 
-จอแสดงผล OLED 0.96" (I2C) x 1
-
-โมดูล Joystick Analog x 1
-
-💻 การติดตั้งและคอมไพล์ (Installation & Setup)
-
-โปรเจกต์นี้เขียนด้วย C++ ผ่านเฟรมเวิร์ก Arduino โดยใช้ PlatformIO IDE บน VS Code
-
-Clone Repository นี้ลงเครื่องของคุณ:
-
+Bash
 git clone [https://github.com/YourUsername/MyBalancingRobot.git](https://github.com/YourUsername/MyBalancingRobot.git)
+Open the MYBALANCINGROBOT folder (or the Project02_STM32.code-workspace file) using VS Code.
 
+Ensure you have the PlatformIO extension installed.
 
-เปิดโฟลเดอร์ MYBALANCINGROBOT (หรือไฟล์ Project02_STM32.code-workspace) ด้วย VS Code
+Switch between folders to upload the code to each specific board:
 
-ตรวจสอบให้แน่ใจว่าได้ติดตั้ง Extension PlatformIO แล้ว
+Remote Board: Open Remote_STM32_2, connect via ST-Link or USB, and click Upload.
 
-สลับโฟลเดอร์เพื่ออัปโหลดโค้ดทีละบอร์ด:
+Balancing Board: Open Self-balancing_STM32, connect, and click Upload.
 
-บอร์ดรีโมท: เปิดโฟลเดอร์ Remote_STM32_2 เสียบสาย ST-Link หรือ USB แล้วกด Upload
+ESP32 Board: Open communication_Esp32, configure your WiFi SSID/Password in the code, connect, and click Upload.
 
-บอร์ดทรงตัว: เปิดโฟลเดอร์ Self-balancing_STM32 เสียบสายแล้วกด Upload
-
-บอร์ด ESP32: เปิดโฟลเดอร์ communication_Esp32 ตั้งค่า WiFi SSID/Password ในโค้ด เสียบสายแล้วกด Upload
-
-📚 Libraries ที่ต้องการ (Dependencies)
-
-(PlatformIO จะดาวน์โหลดให้อัตโนมัติ หากตั้งค่า platformio.ini ไว้ถูกต้อง)
+📚 Dependencies (Libraries)
+(PlatformIO will download these automatically if platformio.ini is configured correctly)
 
 RF24 by TMRh20
 
@@ -116,36 +109,31 @@ QMC5883LCompass
 
 ESP32Servo
 
-🚀 วิธีการใช้งาน (How to use)
+🚀 How to Use
+📱 Using the Web UI
+Turn on the robot (The ESP32 will broadcast a WiFi AP named RobotControl if it cannot connect to your home network).
 
-📱 การใช้งานผ่าน Web UI
+Check the IP Address on the remote's OLED screen (Double-click the joystick button to request the IP and scan the QR Code to open the web app).
 
-เปิดหุ่นยนต์ (ESP32 จะปล่อย WiFi ชื่อ RobotControl หากต่อเน็ตบ้านไม่ได้ หรือจะต่อกับ Router บ้านก็ได้)
+On the Web UI, you can:
 
-ดู IP Address จากหน้าจอ OLED ของรีโมท (กดปุ่ม Joy 2 ครั้งเพื่อขอ IP สแกน QR Code เข้าเว็บได้เลย)
+Steer the robot using the Virtual Joystick.
 
-ในหน้าเว็บสามารถ:
+Tap on the map to set a GPS waypoint, then click SEND ROUTE for autonomous navigation.
 
-บังคับทิศทางด้วย Virtual Joystick
+Control the head pan servos or activate Auto-Scan mode.
 
-จิ้มบนแผนที่เพื่อสร้างเส้นทาง (GPS Waypoint) แล้วกด SEND ROUTE
+🎮 Using the Custom Remote
+Turn on the robot, then turn on the remote.
 
-ควบคุมหันหัวซ้าย-ขวา หรือเปิดโหมด Auto Scan
+Wait for the remote's LED to stop blinking (indicating a successful nRF24L01 connection).
 
-🎮 การใช้งานผ่าน Remote
+Move the joystick to drive the robot forward/backward and turn.
 
-เปิดหุ่นยนต์ และเปิดรีโมท
+Press and hold the joystick button to request the robot's current GPS coordinates (A QR Code linking to Google Maps will appear).
 
-รอให้ไฟ LED ที่รีโมทหยุดกระพริบ (แสดงว่าเชื่อมต่อ nRF24L01 สำเร็จ)
-
-โยกจอยสติ๊กเพื่อบังคับหุ่นยนต์เดินหน้า/ถอยหลัง และเลี้ยว
-
-กดปุ่มจอยสติ๊กค้างไว้เพื่อขอพิกัด GPS ปัจจุบันของหุ่นยนต์ (จะขึ้น QR Code สำหรับ Google Maps)
-
-👨‍💻 ผู้พัฒนา (Author)
-
-[ชื่อของคุณ] - Initial work - ลิงก์ GitHub ของคุณ
+👨‍💻 Author
+[Your Name] - Initial work - [Your GitHub Profile]
 
 📜 License
-
-โปรเจกต์นี้จัดทำขึ้นเพื่อการศึกษาและการทดลองส่วนตัว (สามารถปรับแก้ระบุ License เช่น MIT ได้ตามต้องการ)
+This project is created for educational and personal experimentation purposes. (You can update this section to a specific license, e.g., MIT, as needed).

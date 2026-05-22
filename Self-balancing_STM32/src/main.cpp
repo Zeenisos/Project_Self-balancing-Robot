@@ -47,12 +47,18 @@ float pitchDeg    = 0.0f;
 float gyroX_dps   = 0.0f;
 float gyroBiasX   = 0.0f;
 float gyroX_filt  = 0.0f;
-const float GYRO_ALPHA = 0.4f; 
-const float IMU_SIGN = -1.0f; 
+
+const float GYRO_ALPHA = 0.2f; 
+// 💡 แยกเครื่องหมาย Gyro กับ Accel ออกจากกัน 
+// (ถ้าเปลี่ยนแกนแล้วเซ็นเซอร์ตีกัน ให้มาสลับเครื่องหมาย 1.0f กับ -1.0f ตรงนี้)
+const float ACC_SIGN = -1.0f;  
+const float GYRO_SIGN = 1.0f; // 💡 ปรับกลับเป็น 1.0f ไว้เป็นค่าเริ่มต้นก่อน
 const float CF_ALPHA = 0.95f; 
 
+// 💡 ลบ const float IMU_OFFSET_DEG = -90.0f; ทิ้งไปเลย เพราะสูตรใหม่ฉลาดพอที่จะเซ็ต 0 เอง
+
 // ================================================================
-// 4) ENCODERS / WHEEL PHYSICS
+// 4) ENCODERS / WHEEL PHYSICS (อัปเดตเป็นหน่วย CM)
 // ================================================================
 volatile long encL_cnt = 0;
 volatile long encR_cnt = 0;
@@ -60,29 +66,34 @@ volatile long encR_cnt = 0;
 long lastEncL_cnt = 0;
 long lastEncR_cnt = 0;
 
-float wheelPos_m     = 0.0f;
-float wheelVel_mps   = 0.0f;
+float wheelPos_cm    = 0.0f; 
+float wheelVel_cmps  = 0.0f; 
 
 // Nidec 24H Direct Drive (100 Line * 2 edges = 200 ticks/rev)
-const float COUNTS_PER_REV    = 200.0f; 
-const float WHEEL_DIAMETER_M  = 0.065f; // ล้อขนาด 6.5 cm
-const float WHEEL_CIRC_M      = PI_F * WHEEL_DIAMETER_M;
-const float M_PER_COUNT       = WHEEL_CIRC_M / COUNTS_PER_REV; 
+const float COUNTS_PER_REV    = 90.0f; 
+const float WHEEL_DIAMETER_CM = 8.0f; 
+const float WHEEL_CIRC_CM     = PI_F * WHEEL_DIAMETER_CM;
+const float CM_PER_COUNT      = WHEEL_CIRC_CM / COUNTS_PER_REV; 
 
 // ================================================================
 // 5) FULL-STATE FEEDBACK GAINS (PID)
 // ================================================================
-float Kth   = 30.0f;   // (Angle P) 
-float Kd    = 1.9f;    // (Angle D) 
-float Kx    = 30.0f;   // (Position P) 
-float Kv    = 9.5f;    // (Velocity D) 
-float KiPos = 1.2f;    // (Position I) 
+
+//ค่าที่ได้จาก LQR
+float Kth   =42.5819f;   // (Angle P) พยุงตัว
+float Kd    = 11.1448f;    // (Angle D) ต้านการแกว่ง
+float Kx    = 0.8367f;   // (Position P) 
+float Kv    = 4.1772f;    // (Velocity D)
+float KiPos = 0.01f;    // (Position I) 
+
 
 float posInt = 0.0f;
 const float POS_INT_LIMIT = 100.0f; 
 
-// Angle Offset: ค่านี้ดีมากตอนอยู่นิ่งๆและพักได้เบาๆ
-float angleOffsetDeg = -1.70f; 
+float angleOffsetDeg = 3.0f;  //6.0 ตอนไม่มีหัว
+
+// 💡 ตัวแปรใหม่สำหรับบันทึกกราฟ Setpoint ไปแสดงผลบนหน้าเว็บ
+float currentSetpoint = 0.0f; 
 
 // ================================================================
 // 6) SAFETY / AUTO ARM FLAGS
@@ -101,109 +112,39 @@ uint32_t fallDuration = 0;
 // 7) CONTROL HELPERS & MOTOR VARS
 // ================================================================
 float lastU = 0.0f;
-const float SLEW_MAX = 40000.0f;
+
+// 💡 ปรับความเร่ง (Slew Rate) กลับขึ้นมาเพื่อให้มอเตอร์กระชากตัวพยุงได้ทัน
+const float SLEW_MAX = 15000.0f; 
 const float MAX_U_HW = 255.0f; 
 
+// 💡 ลดค่า MIN_PWM ลง ถ้ามอเตอร์เป็น Direct Drive มักจะไม่ต้องการแรงเตะเริ่มต้นเยอะ
+// 💡 ปรับ MIN_PWM และ DEADZONE ขึ้นเล็กน้อย เพื่อให้มอเตอร์เอาชนะแรงเสียดทานตอนเริ่มหมุนสวนทางได้
 const float MIN_PWM = 15.0f;     
-const float PWM_DEADZONE = 3.0f; 
+const float PWM_DEADZONE = 5.0f; 
 
 const float BRAKE_ANGLE_DEAD = 2.0f;
-const float BRAKE_VEL_LIMIT  = 0.02f;
+const float BRAKE_VEL_LIMIT  = 2.0f; 
 float Bbrake = 0.1f;
 
 const float SNAP_ANGLE_DEG = 5.0f;
-const float SNAP_KV_EXTRA  = 3.5f; 
+const float SNAP_KV_EXTRA  = 1.2f; 
 
 const bool INVERT_L = false;
 const bool INVERT_R = true;
 
-// Joystick Control Variables
-float speedCmd = 0.0f;          // แทน rawTargetAngle
+// Joystick Control Variables (ใส่ระบบ Target สำหรับทำ Soft-Start)
+float targetSpeedCmd = 0.0f;
+float targetTurnCmd  = 0.0f;
+float speedCmd = 0.0f;          
 float turnSpeed = 0.0f;         
 
 // Serial Parsing Buffers
 char rxBuf[64];
 int rxIdx = 0;
+uint32_t lastEspRxTime = 0; 
 
 // ================================================================
-// 8) OLED HELPERS (SSD1306 Direct I2C)
-// ================================================================
-#define OLED_ADDR 0x3C
-uint8_t oledBuf[1024];
-bool oledOK = false;
-uint32_t lastEyeMs = 0;
-
-void oledCmd(uint8_t c) { 
-  Wire.beginTransmission(OLED_ADDR); Wire.write(0x00); Wire.write(c); Wire.endTransmission(); 
-}
-
-void oledInit() {
-  delay(80);
-  oledCmd(0xAE); oledCmd(0x20); oledCmd(0x00); oledCmd(0xB0); oledCmd(0xC8); 
-  oledCmd(0x00); oledCmd(0x10); oledCmd(0x40); oledCmd(0x81); oledCmd(0x7F); 
-  oledCmd(0xA1); oledCmd(0xA6); oledCmd(0xA8); oledCmd(0x3F); oledCmd(0xA4); 
-  oledCmd(0xD3); oledCmd(0x00); oledCmd(0xD5); oledCmd(0x80); oledCmd(0xD9); 
-  oledCmd(0xF1); oledCmd(0xDA); oledCmd(0x12); oledCmd(0xDB); oledCmd(0x40); 
-  oledCmd(0x8D); oledCmd(0x14); oledCmd(0xAF);
-  memset(oledBuf, 0, sizeof(oledBuf)); oledOK = true;
-}
-
-void oledUpdate() {
-  if (!oledOK) return;
-  for (uint8_t page = 0; page < 8; page++) {
-    oledCmd(0xB0 | page); oledCmd(0x00); oledCmd(0x10);
-    for (uint8_t col = 0; col < 128; col += 16) {
-      Wire.beginTransmission(OLED_ADDR); Wire.write(0x40);
-      for (uint8_t i = 0; i < 16; i++) Wire.write(oledBuf[page * 128 + col + i]);
-      Wire.endTransmission();
-    }
-  }
-}
-
-void oledSetPixel(int x, int y, bool on) {
-  if (x < 0 || x >= 128 || y < 0 || y >= 64) return;
-  if(on) oledBuf[(y >> 3) * 128 + x] |= (1 << (y & 7));
-  else   oledBuf[(y >> 3) * 128 + x] &= ~(1 << (y & 7));
-}
-
-void drawEyeSimple(int cx, int cy, int r, int offY) {
-  int rr=r*r;
-  for(int dy=-r;dy<=r;dy++) {
-    for(int dx=-r;dx<=r;dx++) {
-      if(dx*dx+dy*dy<=rr) oledSetPixel(cx+dx, cy+dy, true);
-    }
-  }
-  int pr=r-3; int prr=pr*pr;
-  for(int dy=-pr;dy<=pr;dy++) {
-    for(int dx=-pr;dx<=pr;dx++) {
-      if(dx*dx+dy*dy<=prr) oledSetPixel(cx+dx, cy+dy+offY, false);
-    }
-  }
-}
-
-void drawEyeCross(int cx, int cy, int s) {
-  for(int i=-s;i<=s;i++) { 
-    oledSetPixel(cx+i,cy-i,1); oledSetPixel(cx+i,cy-i+1,1); 
-    oledSetPixel(cx+i,cy+i,1); oledSetPixel(cx+i,cy+i+1,1); 
-  }
-}
-
-void updateEyesFromAngle(float ang) {
-  if(!oledOK) return;
-  memset(oledBuf,0,sizeof(oledBuf));
-  int offY = (int)(ang*0.3f); 
-  if(offY>4) offY=4; if(offY<-4) offY=-4;
-  
-  if(abs(ang)>FALL_ANGLE_DEG) { 
-    drawEyeCross(40,32,10); drawEyeCross(88,32,10); 
-  } else { 
-    drawEyeSimple(40,32,10,offY); drawEyeSimple(88,32,10,offY); 
-  }
-  oledUpdate();
-}
-
-// ================================================================
-// 9) MPU6050 HELPERS
+// 8) MPU6050 HELPERS
 // ================================================================
 inline void mpuWrite(uint8_t reg, uint8_t val) {
   Wire.beginTransmission(MPU_ADDR); Wire.write(reg); Wire.write(val); Wire.endTransmission();
@@ -229,15 +170,15 @@ void mpuCalibrateGyro() {
   for(int j=0; j<5; j++) { digitalWrite(ledPin, !digitalRead(ledPin)); delay(50); }
   for (int i = 0; i < N; i++) {
     uint8_t buf[2];
-    if (mpuReadBytes(0x45, buf, 2)) {
-      int16_t gx = (int16_t)((buf[0] << 8) | buf[1]);
-      sum += gx; good++;
+    if (mpuReadBytes(0x47, buf, 2)) { // 💡 เปลี่ยนมาอ่าน Register 0x47 (Gyro Z)
+      int16_t gz = (int16_t)((buf[0] << 8) | buf[1]);
+      sum += gz; good++;
     }
     delay(2);
   }
   if (good < 10) { gyroBiasX = 0.0f; return; }
   gyroBiasX = ((float)sum / (float)good) / 131.0f;
-  digitalWrite(ledPin, LOW); 
+  digitalWrite(ledPin, HIGH); // (Active HIGH) ไฟติด บอกว่าคาลิเบรตเสร็จแล้ว
 }
 
 float getMedian(float a, float b, float c) {
@@ -252,14 +193,27 @@ void mpuReadAngle(float dt) {
   uint8_t buf[6];
   if (!mpuReadBytes(0x3B, buf, 6)) return;
   int16_t ax = (int16_t)((buf[0] << 8) | buf[1]);
-  int16_t az = (int16_t)((buf[4] << 8) | buf[5]);
-  if (!mpuReadBytes(0x45, buf, 2)) return;
-  int16_t gx = (int16_t)((buf[0] << 8) | buf[1]);
+  int16_t ay = (int16_t)((buf[2] << 8) | buf[3]); // 💡 อ่านแกน Y (ชี้ไปด้านหน้า-หลัง แทนแกน Z)
+  if (!mpuReadBytes(0x47, buf, 2)) return;        // 💡 เปลี่ยนมาอ่าน Register 0x47 (Gyro Z)
+  int16_t gz = (int16_t)((buf[0] << 8) | buf[1]);
 
   float ax_g = (float)ax / 16384.0f;
-  float az_g = (float)az / 16384.0f;
-  float rawAccAngle = atan2f(-ax_g, az_g) * (180.0f / PI_F) * IMU_SIGN;
-  float gyro_raw_dps = (((float)gx / 131.0f) - gyroBiasX) * IMU_SIGN;
+  float ay_g = (float)ay / 16384.0f;
+  
+  // 💡 สูตรใหม่! ใช้ atan2f(Y, X) จะได้ 0 องศาพอดีตอนที่บอร์ดตั้งตรง โดยไม่ต้องมี Offset มากวนใจ
+  float rawAccAngle = atan2f(ay_g, ax_g) * (180.0f / PI_F);
+
+  // 💡 ถ้าติดชิปกลับหัว (แกน X ชี้ขึ้นฟ้า) ค่ามันจะเป็น +-180 โค้ดนี้จะหักลบให้เหลือ 0 เองอัตโนมัติ
+  if (rawAccAngle > 90.0f) {
+    rawAccAngle -= 180.0f;
+  } else if (rawAccAngle < -90.0f) {
+    rawAccAngle += 180.0f;
+  }
+  
+  rawAccAngle *= ACC_SIGN;
+
+  // 💡 ใช้ GYRO_SIGN เฉพาะของ Gyroscope
+  float gyro_raw_dps = (((float)gz / 131.0f) - gyroBiasX) * GYRO_SIGN;
 
   static float angHist[3] = {0,0,0};
   angHist[0] = angHist[1]; angHist[1] = angHist[2]; angHist[2] = rawAccAngle;
@@ -273,13 +227,13 @@ void mpuReadAngle(float dt) {
 }
 
 // ================================================================
-// 10) ENCODER INTERRUPT SERVICE ROUTINES
+// 9) ENCODER INTERRUPT SERVICE ROUTINES
 // ================================================================
 void isrEncLA() { if (digitalRead(encLA) == digitalRead(encLB)) encL_cnt++; else encL_cnt--; }
 void isrEncRA() { if (digitalRead(encRA) == digitalRead(encRB)) encR_cnt++; else encR_cnt--; }
 
 // ================================================================
-// 11) MOTOR DRIVER FUNCTIONS
+// 10) MOTOR DRIVER FUNCTIONS
 // ================================================================
 void setMotorRaw(int pwmPin, int dirPin, int enPin, int val, bool invertDir) {
   if (val == 0) {
@@ -322,7 +276,7 @@ void drive(float u, float turn) {
   float angDead = BRAKE_ANGLE_DEAD * Bbrake;
   float velDead = BRAKE_VEL_LIMIT  * Bbrake;
   
-  if (abs(pitchDeg) < angDead && abs(wheelVel_mps) < velDead && abs(u) < 5.0f && abs(turn) < 2.0f) {
+  if (abs(pitchDeg) < angDead && abs(wheelVel_cmps) < velDead && abs(u) < 5.0f && abs(turn) < 2.0f) {
     brakeAll();
     lastU = 0.0f;
     return;
@@ -333,34 +287,58 @@ void drive(float u, float turn) {
 }
 
 // ================================================================
-// 12) COMMAND & TELEMETRY
+// 11) COMMAND & TELEMETRY
 // ================================================================
 float parseFloatFrom(const char* s) { return (float)atof(s); }
 
 void processLine(char* line) {
+  // --- 💡 ส่วนประมวลผลคำสั่งจอยสติ๊กจาก ESP32 ---
   if (line[0] == '*') {
-    String s = String(line);
-    int comma = s.indexOf(',');
-    int hash = s.indexOf('#');
-    if (comma > 0 && hash > comma) {
+    
+    lastEspRxTime = millis(); 
+
+    char* comma = strchr(line, ',');
+    char* hash = strchr(line, '#');
+    char* comma2 = nullptr;
+
+    if (comma != nullptr && hash != nullptr && hash > comma) {
       
-      // ESP32 ส่งมาเป็น *แกนX(เดินหน้า),แกนY(เลี้ยว)#
-      float rawX = s.substring(1, comma).toFloat();
-      float rawY = s.substring(comma + 1, hash).toFloat();
+      // ค้นหา Comma ตัวที่สอง (ถ้ามีแปลว่า ESP32 ส่งพารามิเตอร์ Fine Turn มาด้วย)
+      comma2 = strchr(comma + 1, ',');
+      if (comma2 != nullptr && comma2 >= hash) comma2 = nullptr;
+
+      *comma = '\0';  
+      *hash = '\0';  
       
-      // ==========================================
-      // 🚀 1. ควบคุมด้วย "ความเร็ว" 
-      // เนื่องจากค่า X ที่มาจาก ESP32 ถูกคูณมาแรงแล้ว (เช่น 1200) 
-      // เราจึงเอามาคูณให้เป็นความเร็วจริง (m/s) อีกที
-      // ==========================================
-      speedCmd = rawX * 0.001f; // ถ้า X=1200 ความเร็วเป้าหมายคือ 1.2 m/s
+      float forwardVal = (float)atoi(line + 1); 
+      float turnVal = 0.0f;
+      bool isFineTurn = false;
       
-      // เลี้ยว: ถ้า Y=600 สั่งล้อสวนกันแรงๆ
-      turnSpeed = rawY * 0.2f; 
+      if (comma2 != nullptr) {
+          *comma2 = '\0';
+          turnVal = (float)atoi(comma + 1); 
+          if (atoi(comma2 + 1) == 1) isFineTurn = true;
+      } else {
+          turnVal = (float)atoi(comma + 1); 
+      }
+      
+      // 💡 ลด Deadzone ที่เคยตัดคำสั่งทิ้ง (เดิม 5.0 ทำให้เลี้ยวเบาๆ หายไปหมด)
+      if (abs(forwardVal) < 1.0f) forwardVal = 0.0f;
+      if (abs(turnVal) < 1.0f) turnVal = 0.0f;
+      
+      targetSpeedCmd = forwardVal * 7.5f;  
+      
+      // 💡 เพิ่มตัวคูณแรงหมุนให้สูงทะลุแรงพยุงตัว (u) ล้อจะได้ถูกบังคับให้หมุนสวนทางกันจริงๆ
+      if (isFineTurn) {
+          targetTurnCmd = turnVal * 2.0f; // จูนเพิ่มเป็น 8
+      } else {
+          targetTurnCmd = turnVal * 4.0f; // 💡 จูนเพิ่มจาก 8 เป็น 18 (แม็กซ์ที่ 180) หมุนสะใจแน่นอน
+      }
     }
     return;
   }
 
+  // --- ส่วนประมวลผลคำสั่ง PID Tuning ---
   char cmd = line[0];
   if (cmd >= 'a' && cmd <= 'z') cmd -= 32; 
   float val = parseFloatFrom(line + 1);
@@ -374,7 +352,7 @@ void processLine(char* line) {
     case 'A': angleOffsetDeg = val; break;
     case 'C': 
       angleOffsetDeg = pitchDeg; 
-      posInt = 0; wheelPos_m = 0; 
+      posInt = 0; wheelPos_cm = 0; 
       break;
     case 'S': 
       if (val > 0) { runEnabled = true; } else { runEnabled = false; brakeAll(); }
@@ -385,14 +363,27 @@ void processLine(char* line) {
 void readESP32() {
   while (SerialESP.available()) {
     char c = (char)SerialESP.read();
+    
+    // ทิ้งอักขระที่ไม่จำเป็น
     if (c == '\r') continue;
+    
+    // 💡 ถ้าเจอตัว * ให้ล้าง Buffer ใหม่เสมอ (ตัดปัญหาข้อมูลขยะปนมาข้างหน้า)
+    if (c == '*') {
+      rxIdx = 0; 
+    }
+    
+    // 💡 ถ้าเจอการจบแพ็กเก็ตด้วย \n (PID Command) หรือ # (Joystick Command) ให้ประมวลผลทันที
     if (c == '\n' || c == '#') {
-      if (c == '#') rxBuf[rxIdx++] = c;
-      rxBuf[rxIdx] = 0;
-      if (rxIdx > 0) processLine(rxBuf);
-      rxIdx = 0;
+      if (c == '#') rxBuf[rxIdx++] = c; // เก็บ # ไว้เช็คใน processLine
+      
+      rxBuf[rxIdx] = '\0'; // ปิดท้าย String
+      
+      if (rxIdx > 0) { 
+        processLine(rxBuf);
+      }
+      rxIdx = 0; // เคลียร์ Index เตรียมรับข้อความใหม่
     } else {
-      if (rxIdx < 63) rxBuf[rxIdx++] = c;
+      if (rxIdx < 63) rxBuf[rxIdx++] = c; // เก็บตัวอักษรลง Buffer
     }
   }
 }
@@ -401,11 +392,14 @@ void sendTelemetry() {
   static uint32_t lastTel = 0;
   if (millis() - lastTel > 50) { 
      lastTel = millis();
+     
+     int espLinkActive = (millis() - lastEspRxTime < 1000) ? 1 : 0; 
+     
      SerialESP.print(millis()); SerialESP.print(",");
      SerialESP.print(pitchDeg, 2); SerialESP.print(",");
      SerialESP.print(gyroX_dps, 2); SerialESP.print(",");
-     SerialESP.print(wheelPos_m, 4); SerialESP.print(",");
-     SerialESP.print(wheelVel_mps, 4); SerialESP.print(",");
+     SerialESP.print(wheelPos_cm, 2); SerialESP.print(","); 
+     SerialESP.print(wheelVel_cmps, 2); SerialESP.print(","); 
      SerialESP.print(lastU, 1); SerialESP.print(",");
      SerialESP.print(runEnabled ? 1 : 0); SerialESP.print(",");
      SerialESP.print(Kth, 1); SerialESP.print(",");
@@ -413,12 +407,16 @@ void sendTelemetry() {
      SerialESP.print(Kx, 1); SerialESP.print(",");
      SerialESP.print(Kv, 1); SerialESP.print(",");
      SerialESP.print(KiPos, 4); SerialESP.print(",");
-     SerialESP.println(angleOffsetDeg, 2);
+     SerialESP.print(angleOffsetDeg, 2); SerialESP.print(",");
+     SerialESP.print(espLinkActive); SerialESP.print(",");
+     
+     // 💡 ส่งค่า Setpoint (พารามิเตอร์ที่ 14) ไปให้ ESP32 นำไปพล็อตกราฟ
+     SerialESP.println(currentSetpoint, 2); 
   }
 }
 
 // ================================================================
-// 13) SETUP & MAIN LOOP
+// 12) SETUP & MAIN LOOP
 // ================================================================
 void setup() {
   pinMode(pwmL, OUTPUT); pinMode(dirL, OUTPUT); pinMode(enL, OUTPUT);
@@ -435,14 +433,11 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(encRA), isrEncRA, CHANGE);
 
   brakeAll();
-  digitalWrite(ledPin, HIGH); 
+  digitalWrite(ledPin, LOW); // (Active HIGH) สั่งปิดไฟตอนเริ่ม Setup
 
   Serial.begin(115200); 
   SerialESP.begin(115200);
   Wire.begin(); Wire.setClock(400000); 
-
-  oledInit();
-  if (oledOK) updateEyesFromAngle(0.0f);
 
   if (!mpuInit()) {
     while (1) { digitalWrite(ledPin, !digitalRead(ledPin)); delay(100); }
@@ -450,8 +445,7 @@ void setup() {
   mpuCalibrateGyro();
 
   lastEncL_cnt = encL_cnt; lastEncR_cnt = encR_cnt;
-  digitalWrite(ledPin, LOW); 
-  lastEyeMs = millis();
+  digitalWrite(ledPin, HIGH); // (Active HIGH) เปิดไฟค้างไว้พร้อมทำงาน
 }
 
 void loop() {
@@ -468,29 +462,40 @@ void loop() {
   mpuReadAngle(dt);
   
   // 2. Read Encoders
-  long curL = encL_cnt, curR = encR_cnt;
-  float dPos = (0.5f * (float)((curL-lastEncL_cnt) + (curR-lastEncR_cnt))) * M_PER_COUNT;
-  wheelPos_m += dPos;
-  wheelVel_mps = 0.7f * wheelVel_mps + 0.3f * (dPos / dt); 
+  long curL = encL_cnt;
+  long curR = -encR_cnt; 
+  float dPos = (0.5f * (float)((curL-lastEncL_cnt) + (curR-lastEncR_cnt))) * CM_PER_COUNT;
+  wheelPos_cm += dPos;
+  
+  wheelVel_cmps = 0.8f * wheelVel_cmps + 0.2f * (dPos / dt); 
+  
   lastEncL_cnt = curL; lastEncR_cnt = curR;
 
   // 3. Command
   readESP32();
+  
+  // ตัดระบบเซฟตี้ ถ้าสายหลุด ให้ลดค่าเป้าหมายลงเป็น 0 อย่างนุ่มนวล
+  if (millis() - lastEspRxTime >= 1000) {
+      targetSpeedCmd = 0.0f; 
+      targetTurnCmd = 0.0f;
+  }
 
   // 4. Safety Logic
   if (abs(pitchDeg) > FALL_ANGLE_DEG) {
     if (fallDuration == 0) fallDuration = nowMs;
     if (nowMs - fallDuration > 100) { 
       runEnabled = false; armStableStart = 0; brakeAll();
-      wheelPos_m = 0; posInt = 0; lastU = 0; 
+      wheelPos_cm = 0; posInt = 0; lastU = 0; 
+      currentSetpoint = angleOffsetDeg; // รีเซ็ตกราฟ Setpoint เวลามันล้ม
     }
   } else {
     fallDuration = 0;
     if (!runEnabled && abs(pitchDeg) < ARM_ANGLE_DEG && abs(gyroX_dps) < ARM_GYRO_DPS) {
       if (armStableStart == 0) armStableStart = nowMs;
       else if (nowMs - armStableStart > ARM_MS) {
-         runEnabled = true; wheelPos_m = 0; posInt = 0; lastU = 0;
-         digitalWrite(ledPin, LOW); speedCmd = 0;
+         runEnabled = true; wheelPos_cm = 0; posInt = 0; lastU = 0;
+         digitalWrite(ledPin, HIGH); // (Active HIGH) เปิดไฟตอนเริ่มตั้งไข่
+         targetSpeedCmd = 0; targetTurnCmd = 0; // รีเซ็ตคำสั่งตอนเริ่มตั้งไข่
       }
     } else { armStableStart = 0; }
   }
@@ -498,61 +503,79 @@ void loop() {
   // 5. PID Control Logic
   float u = 0.0f;
   if (runEnabled) {
-    static bool wasMoving = false;
-    bool isCmdActive = (abs(speedCmd) > 0.001f || abs(turnSpeed) > 0.05f);
+    
+    speedCmd  = 0.95f * speedCmd  + 0.05f * targetSpeedCmd;
+    // 💡 ปรับให้การหมุน (Turn) ตอบสนองไวขึ้น ลดความเฉื่อย เพื่อให้หุ่นบิดตัวได้ทันทีที่สั่ง
+    turnSpeed = 0.85f * turnSpeed + 0.15f * targetTurnCmd;
+      
+    bool isUserCommanding = (abs(targetSpeedCmd) > 0.1f || abs(targetTurnCmd) > 0.1f);
+    
+    // 💡 ตัวแปรใหม่: ใช้แยกแยะว่าการเคลื่อนที่นี้เกิดจาก "จอยสติ๊ก" หรือ "โดนผลักภายนอก"
+    static bool userWasDriving = false;
 
-    // ==========================================
-    // 🚀 3. ปลดเชือก และ ขับเคลื่อน (Anti-Rubber Band)
-    // ==========================================
-    if (isCmdActive) {
-        // หลอกให้หุ่นวิ่งตามตำแหน่งเป้าหมายที่เคลื่อนที่ไปเรื่อยๆ (หุ่นจะเทตัววิ่งอัตโนมัติ)
-        wheelPos_m -= speedCmd * dt; 
-        posInt = 0.0f; // ปิด I-term ตอนกำลังวิ่งเพื่อความสมูท
-        wasMoving = true;
+    if (isUserCommanding) {
+        // ถ้าผู้ใช้ดันจอย ให้จำไว้ว่าอยู่ในโหมด "กำลังขับขี่"
+        userWasDriving = true;
+    } else if (abs(wheelVel_cmps) < 5.0f) {
+        // ถ้าปล่อยจอยแล้ว และรถเบรกจนความเร็วเกือบหยุดสนิท ถึงจะออกจากโหมดขับขี่
+        userWasDriving = false;
+    }
+
+    if (userWasDriving) {
+        // 🟢 โหมดขับขี่ / กำลังไถลเบรก: รีเซ็ตพิกัดทิ้งไปเรื่อยๆ เพื่อไม่ให้เกิดอาการหนังยาง
+        wheelPos_cm = 0.0f; 
+        posInt = 0.0f; 
     } else {
-        if (wasMoving) {
-            // จังหวะเพิ่งปล่อยจอยสติ๊ก: รีเซ็ตตำแหน่งให้หยุดนิ่งตรงนี้ทันที (ป้องกันการเด้งกลับ)
-            wheelPos_m = 0.0f; 
-            posInt = 0.0f;
-            wasMoving = false;
-        }
-        // ตอนอยู่นิ่ง: เปิด I-term ช่วยพยุงไม่ให้ไหล
+        // 🔴 โหมดรักษาตำแหน่ง (ยืนนิ่ง): ถ้ารถโดนผลัก พิกัด wheelPos_cm จะสะสมและดึงรถกลับมาที่เดิม!
         if (KiPos > 0.0f) {
-            posInt += wheelPos_m * dt;
+            posInt += wheelPos_cm * dt;
             posInt *= 0.99f; 
             posInt = constrain(posInt, -POS_INT_LIMIT, POS_INT_LIMIT);
         }
     }
     
-    // 🚀 เพิ่ม Feedforward: สั่งให้หุ่น "ชิงเอียงตัว" ล่วงหน้าตามความเร็วที่สั่ง
-    float targetAngleOffset = speedCmd * 2.5f; 
+    float targetAngleOffset = speedCmd * 0.03f; 
+    currentSetpoint = angleOffsetDeg + targetAngleOffset; 
     
-    float errTh = pitchDeg - (angleOffsetDeg + targetAngleOffset);
-    float errVel = wheelVel_mps - speedCmd; // ลบความเร็วเป้าหมายออก เพื่อไม่ให้ระบบ PID ต้านการวิ่ง
+    float errTh = pitchDeg - currentSetpoint;
+    float errVel = wheelVel_cmps - speedCmd; 
     
-    float uRaw = Kth*(errTh) + Kd*gyroX_dps + Kx*wheelPos_m + Kv*errVel + KiPos*posInt;
-    
-    // Snap-up assist
-    if (abs(errTh) < SNAP_ANGLE_DEG && !isCmdActive) {
-       uRaw -= SNAP_KV_EXTRA * wheelVel_mps;
+    // คลายเบรกอัตโนมัติ 50% เฉพาะตอนที่ผู้ใช้ขับ หรือรถกำลังไถลเบรกจากการขับ
+    if (userWasDriving) {
+        errVel *= 0.3f; 
     }
     
-    u = uRaw;
+    float uRaw = Kth*(errTh) + Kd*gyroX_dps + Kx*wheelPos_cm + Kv*errVel + KiPos*posInt;
     
-    // 🚀 ส่งคำสั่งความเร็วมอเตอร์ + คำสั่งหมุน
+    // ระบบกระชากให้รถหยุดนิ่งสนิท จะทำงานก็ต่อเมื่อไม่ได้อยู่ในโหมดขับขี่
+    if (abs(errTh) < SNAP_ANGLE_DEG && !userWasDriving) {
+       uRaw -= SNAP_KV_EXTRA * wheelVel_cmps;
+    }
+    
+    static float uFiltered = 0.0f;
+    uFiltered = 0.2f * uFiltered + 0.8f * uRaw; 
+    
+    u = uFiltered;
+    
     drive(u, turnSpeed);
   } else {
     brakeAll();
-    lastU = 0;
+    lastU = 0; 
+    currentSetpoint = angleOffsetDeg; // รีเซ็ตกราฟ Setpoint เวลาหยุดทำงาน
   }
 
-  // 6. Telemetry & OLED
+  // 6. Telemetry และ เช็คสายสัญญาณไฟ LED
   sendTelemetry();
-  if (oledOK && (nowMs - lastEyeMs > 100)) {
-      lastEyeMs = nowMs;
-      if (!runEnabled) {
-        if (abs(pitchDeg) > FALL_ANGLE_DEG) drawEyeCross(64, 32, 10);
-        else updateEyesFromAngle(pitchDeg);
-      }
+  
+  // 💡 เช็คสถานะการเชื่อมต่อสายไฟแบบเข้มงวด (แก้เป็น Active HIGH)
+  if (millis() - lastEspRxTime < 500) {
+      // 🟢 สายปกติ: ไฟจะกระพริบช้าๆ เป็นจังหวะชัดเจน (สว่างสลับดับ)
+      digitalWrite(ledPin, (millis() / 150) % 2); 
+  } else if (runEnabled) {
+      // 🔴 หุ่นทำงานอยู่แต่สายหลุด -> ไฟดับค้าง (Active HIGH -> LOW = OFF)
+      digitalWrite(ledPin, LOW); 
+  } else {
+      // 🔴 หุ่นล้ม/ไม่ทำงาน และสายหลุด -> ไฟติดค้าง (Active HIGH -> HIGH = ON)
+      digitalWrite(ledPin, HIGH);  
   }
 }
